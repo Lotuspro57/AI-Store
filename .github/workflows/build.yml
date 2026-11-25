@@ -1,9 +1,9 @@
-name: Build Windows app
+name: Build Android app
 
 on:
   push:
     branches: [main, master]
-    paths-ignore:
+    paths:
       - 'android/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
@@ -13,38 +13,46 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-java@v4
         with:
-          node-version: 20
+          distribution: temurin
+          java-version: 17
 
-      - name: Install dependencies
-        run: npm install
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
 
-      - name: Build installer
-        run: npx electron-builder --win --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Make sure the Android platform is installed
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;34.0.0" || true
 
-      - name: Read app version
-        id: ver
-        shell: bash
-        run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Build the APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Name the APK
+        id: apk
+        run: |
+          VER=$(grep -oP "versionName '\K[^']+" android/app/build.gradle)
+          cp android/app/build/outputs/apk/release/app-release.apk "Multi-AI-Android-$VER.apk"
+          echo "v=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Keep a copy as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Multi-Windows
-          path: |
-            dist/*.exe
+          name: Multi-AI-Android
+          path: Multi-AI-Android-*.apk
 
       - name: Publish a download link (GitHub Release)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.ver.outputs.v }}
-          name: Multi AI ${{ steps.ver.outputs.v }}
-          body: Download the file named Setup, run it, and click More info then Run anyway if Windows asks.
-          files: dist/*.exe
+          tag_name: android-v${{ steps.apk.outputs.v }}
+          name: Multi AI for Android ${{ steps.apk.outputs.v }}
+          body: Open this page on your phone, download the .apk file and tap it to install. Android may ask you to allow installs from your browser once.
+          files: Multi-AI-Android-*.apk
+          make_latest: false
