@@ -702,7 +702,7 @@ public class MainActivity extends Activity {
     private WebView createWebView(Svc s) {
         WebView w = new WebView(this);
         // Separate login storage for this app, when the phone supports it. Must happen before loading.
-        if (s.profile != null && profilesOk) {
+        if (s.profile != null && profilesOk && !"claude1".equals(s.id)) {
             try {
                 Class<?> storeCls = Class.forName("androidx.webkit.ProfileStore");
                 Object store = storeCls.getMethod("getInstance").invoke(null);
@@ -722,7 +722,7 @@ public class MainActivity extends Activity {
         st.setDomStorageEnabled(true);
         st.setDatabaseEnabled(true);
         st.setLoadWithOverviewMode(true);
-        st.setSupportMultipleWindows(false);
+        st.setSupportMultipleWindows(true);
         st.setMediaPlaybackRequiresUserGesture(true);
         st.setBuiltInZoomControls(true);
         st.setDisplayZoomControls(false);
@@ -730,12 +730,37 @@ public class MainActivity extends Activity {
         st.setAllowContentAccess(true);
         st.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         try {
+            CookieManager.getInstance().setAcceptCookie(true);
             CookieManager.getInstance().setAcceptThirdPartyCookies(w, true);
         } catch (Throwable t) {
             // ignore
         }
         w.setBackgroundColor(cBg);
         w.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                Toast.makeText(MainActivity.this, "Loaded: " + v.getTitle() + " | " + url, Toast.LENGTH_SHORT).show();
+            }
+            private void fail(WebView v, String what) {
+                String h = "<html><body style='background:#171614;color:#eee;font-family:sans-serif;padding:24px'>"
+                    + "<h3>This page could not load</h3><p>" + what + "</p>"
+                    + "<p>Check your internet, then tap the three dots and choose Reload.</p></body></html>";
+                v.loadDataWithBaseURL(null, h, "text/html", "utf-8", null);
+            }
+            @Override
+            public void onReceivedError(WebView v, WebResourceRequest r, android.webkit.WebResourceError e) {
+                if (r.isForMainFrame()) fail(v, "Error: " + e.getDescription() + " (" + e.getErrorCode() + ")<br>" + r.getUrl());
+            }
+            @Override
+            public void onReceivedHttpError(WebView v, WebResourceRequest r, android.webkit.WebResourceResponse e) {
+                if (r.isForMainFrame() && e.getStatusCode() >= 400 && e.getStatusCode() != 403)
+                    fail(v, "Server answered " + e.getStatusCode() + "<br>" + r.getUrl());
+            }
+            @Override
+            public void onReceivedSslError(WebView v, android.webkit.SslErrorHandler h, android.net.http.SslError e) {
+                h.cancel();
+                fail(v, "Secure connection failed. Check the phone's date and time.");
+            }
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String u = request.getUrl().toString();
@@ -749,6 +774,24 @@ public class MainActivity extends Activity {
             }
         });
         w.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+                // login pages often open a pop-up; load it in the same view instead
+                final WebView target = view;
+                WebView tmp = new WebView(MainActivity.this);
+                tmp.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                        target.loadUrl(r.getUrl().toString());
+                        return true;
+                    }
+                });
+                WebView.WebViewTransport t = (WebView.WebViewTransport) resultMsg.obj;
+                t.setWebView(tmp);
+                resultMsg.sendToTarget();
+                return true;
+            }
+
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCb != null) fileCb.onReceiveValue(null);
