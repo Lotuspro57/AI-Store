@@ -1,0 +1,68 @@
+name: Build Android app
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find the Android project
+        id: proj
+        run: |
+          F=$(find . -name settings.gradle -not -path "*/node_modules/*" | head -1)
+          if [ -z "$F" ]; then
+            echo "The Android project was not found. Upload the 'android' folder to the main page of the repo."
+            ls -R | head -50
+            exit 1
+          fi
+          echo "dir=$(dirname "$F")" >> "$GITHUB_OUTPUT"
+          echo "Android project is in $(dirname "$F")"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      - name: Install the Android platform
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;34.0.0" || true
+
+      - name: Build the APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Name the APK
+        id: apk
+        run: |
+          VER=$(grep -oP "versionName '\K[^']+" "${{ steps.proj.outputs.dir }}/app/build.gradle")
+          APK=$(find "${{ steps.proj.outputs.dir }}" -name "app-release.apk" | head -1)
+          cp "$APK" "Multi-AI-Android-$VER.apk"
+          echo "v=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Keep a copy as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Multi-AI-Android
+          path: Multi-AI-Android-*.apk
+
+      - name: Publish a download link (GitHub Release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ steps.apk.outputs.v }}
+          name: Multi AI for Android ${{ steps.apk.outputs.v }}
+          body: Open this page on your phone, download the .apk file and tap it to install. Android may ask you to allow installs from your browser once.
+          files: Multi-AI-Android-*.apk
+          make_latest: false
